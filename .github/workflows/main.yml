@@ -49,7 +49,7 @@ jobs:
           cd kernel
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s ${{ inputs.ksun_branch }}
           git submodule update --init --recursive
-          echo "CONFIG_KSU=y" >> arch/arm64/configs/veux_defconfig
+          echo "CONFIG_KSU=y" >> vendor/veux-qgki_defconfig
 
       - name: Branding Kernel (Lal Singh)
         run: |
@@ -66,22 +66,20 @@ jobs:
         run: |
           cd kernel
           export PATH="${CLANG_BIN_PATH}:$PATH"
-          export ARCH=arm64 SUBARCH=arm64
-          export LLVM=1 LLVM_IAS=1
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          export CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export LLVM=1
+          export LLVM_IAS=1
           OUT=out
           mkdir -p $OUT
 
-          make O=$OUT veux_defconfig
+          # Use vendor defconfig
+          make O=$OUT vendor/veux-qgki_defconfig
 
+          # Apply optimization flags
           if [ "${{ inputs.optimize_level }}" = "O3" ]; then
-            scripts/config --file "$OUT/.config" -d CC_OPTIMIZE_FOR_PERFORMANCE
-            scripts/config --file "$OUT/.config" -e CC_OPTIMIZE_FOR_PERFORMANCE_O3
             export KCFLAGS="-O3 -pipe -march=armv8-a -flto=thin -fgraphite-identity -floop-nest-optimize"
           else
-            scripts/config --file "$OUT/.config" -e CC_OPTIMIZE_FOR_PERFORMANCE
-            scripts/config --file "$OUT/.config" -d CC_OPTIMIZE_FOR_PERFORMANCE_O3
             export KCFLAGS="-O2 -pipe -march=armv8-a -flto=thin"
           fi
 
