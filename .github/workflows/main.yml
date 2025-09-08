@@ -1,116 +1,38 @@
-name: Build and Release Lal Singh Xiaomi Kernel
-
-on:
-  workflow_dispatch:
-    inputs:
-      model:
-        description: "Device codename"
-        required: true
-        default: veux
-      branch:
-        description: "Kernel source branch"
-        required: false
-        default: main
-      ksun_branch:
-        description: "KernelSU branch"
-        required: false
-        default: stable
-
 jobs:
   build:
     runs-on: ubuntu-22.04
-
-    permissions:
-      contents: write
-
     steps:
-      - name: Checkout Kernel Source
+      - name: Checkout source
         uses: actions/checkout@v4
-        with:
-          repository: lalsingh1985/kernel_xiaomi_sm6375
-          ref: ${{ inputs.branch }}
-          path: kernel
 
-      - name: Install Dependencies
+      - name: Install LLVM 21
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y \
-            build-essential git bc bison flex libssl-dev \
-            libncurses-dev libelf-dev ccache curl unzip \
-            wget lld zlib1g-dev libxml2-utils \
-            python3 rsync file software-properties-common gnupg
+          sudo bash -c "$(wget -O - https://apt.llvm.org/llvm.sh)" 21
+          sudo apt-get install -y clang-21 lld-21 llvm-21 llvm-21-dev
 
-          # Install Clang/LLVM 21 from apt.llvm.org
-          wget https://apt.llvm.org/llvm.sh
-          chmod +x llvm.sh
-          sudo ./llvm.sh 21
+          # symlink to make clang 21 the default
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-21 200
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-21 200
+          sudo update-alternatives --install /usr/bin/ld.lld ld.lld /usr/bin/ld.lld-21 200
+          sudo update-alternatives --install /usr/bin/llvm-ar llvm-ar /usr/bin/llvm-ar-21 200
+          sudo update-alternatives --install /usr/bin/llvm-nm llvm-nm /usr/bin/llvm-nm-21 200
+          sudo update-alternatives --install /usr/bin/llvm-objcopy llvm-objcopy /usr/bin/llvm-objcopy-21 200
+          sudo update-alternatives --install /usr/bin/llvm-objdump llvm-objdump /usr/bin/llvm-objdump-21 200
+          sudo update-alternatives --install /usr/bin/llvm-strip llvm-strip /usr/bin/llvm-strip-21 200
 
-          clang-21 --version
-          echo "CLANG_BIN_PATH=$(dirname $(which clang-21))" >> $GITHUB_ENV
-
-      - name: Setup KernelSU-Next
+      - name: Build kernel
         run: |
-          cd kernel
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s ${{ inputs.ksun_branch }}
-          git submodule update --init --recursive
-          echo "CONFIG_KSU=y" >> arch/arm64/configs/vendor/veux-qgki_defconfig
-
-      - name: Branding Kernel (Lal Singh)
-        run: |
-          cd kernel
-          echo "-LalSingh" > LOCALVERSION
-          sed -i 's/^EXTRAVERSION.*/EXTRAVERSION = -LalSingh/' Makefile
-
-      - name: Build Kernel (LLVM 21)
-        run: |
-          cd kernel
-
           export ARCH=arm64
           export SUBARCH=arm64
           export LLVM=1
-          export LLVM_IAS=1
-          export CC=clang-21
+          export CC=clang
           export LD=ld.lld
           export AR=llvm-ar
           export NM=llvm-nm
           export OBJCOPY=llvm-objcopy
           export OBJDUMP=llvm-objdump
           export STRIP=llvm-strip
-          OUT=out
-          mkdir -p $OUT
+          export LLVM_IAS=1
 
-          # Load vendor defconfig
-          make O=$OUT vendor/veux-qgki_defconfig
-
-          # Enable ThinLTO and LLD support
-          scripts/config --file $OUT/.config --enable LTO_CLANG        || true
-          scripts/config --file $OUT/.config --enable LTO_CLANG_THIN  || true
-          scripts/config --file $OUT/.config --enable HAVE_LLD        || true
-          make O=$OUT olddefconfig
-
-          # Conservative extra flags
-          export EXTRA_CFLAGS="-fno-plt -ffunction-sections -fdata-sections -fomit-frame-pointer"
-          export KBUILD_CFLAGS="$EXTRA_CFLAGS"
-
-          # Build with all cores
-          make -j$(nproc) O=$OUT \
-            ARCH=arm64 \
-            LLVM=1 \
-            CC=clang-21 LD=ld.lld \
-            EXTRA_CFLAGS="$EXTRA_CFLAGS"
-
-          sha256sum $OUT/arch/arm64/boot/Image
-
-      - name: Package AnyKernel3
-        run: |
-          git clone --depth=1 https://github.com/TheWildJames/AnyKernel3.git AnyKernel3
-          cp kernel/out/arch/arm64/boot/Image AnyKernel3/
-          cd AnyKernel3
-          ZIP_NAME="LalSingh_${{ inputs.model }}_LLVM21_KSU.zip"
-          zip -r9 "../$ZIP_NAME" ./*
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: LalSingh-${{ inputs.model }}-Kernel
-          path: LalSingh_${{ inputs.model }}_LLVM21_KSU.zip
+          make O=out vendor/veux-qgki_defconfig
+          make -j$(nproc) O=out
