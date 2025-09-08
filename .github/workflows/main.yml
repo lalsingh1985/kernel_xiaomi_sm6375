@@ -19,10 +19,6 @@ on:
         description: "KernelSU branch"
         required: false
         default: stable
-      susfs_branch:
-        description: "SUSFS branch/commit"
-        required: false
-        default: main
 
 jobs:
   build:
@@ -53,18 +49,7 @@ jobs:
           cd kernel
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s ${{ inputs.ksun_branch }}
           git submodule update --init --recursive
-
-      - name: Apply SUSFS
-        run: |
-          cd kernel
-          git clone https://gitlab.com/simonpunk/susfs4ksu.git
-          cd susfs4ksu
-          git checkout ${{ inputs.susfs_branch }} || true
-          cd ..
-          cp -r susfs4ksu/kernel_patches/fs/* ./fs/ || true
-          cp -r susfs4ksu/kernel_patches/include/linux/* ./include/linux/ || true
           echo "CONFIG_KSU=y" >> arch/arm64/configs/veux_defconfig
-          echo "CONFIG_KSU_SUSFS=y" >> arch/arm64/configs/veux_defconfig
 
       - name: Branding Kernel (Lal Singh)
         run: |
@@ -88,7 +73,7 @@ jobs:
           OUT=out
           mkdir -p $OUT
 
-          make O=$OUT vendor/veux-qgki_defconfig
+          make O=$OUT veux_defconfig
 
           if [ "${{ inputs.optimize_level }}" = "O3" ]; then
             scripts/config --file "$OUT/.config" -d CC_OPTIMIZE_FOR_PERFORMANCE
@@ -110,11 +95,11 @@ jobs:
           git clone --depth=1 https://github.com/TheWildJames/AnyKernel3.git AnyKernel3
           cp kernel/out/arch/arm64/boot/Image AnyKernel3/
           cd AnyKernel3
-          ZIP_NAME="LalSingh_${{ inputs.model }}_${{ inputs.optimize_level }}_KSU_SUSFS.zip"
+          ZIP_NAME="LalSingh_${{ inputs.model }}_${{ inputs.optimize_level }}_KSU.zip"
           zip -r9 "../$ZIP_NAME" ./*
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: LalSingh-${{ inputs.model }}-Kernel
-          path: LalSingh_${{ inputs.model }}_${{ inputs.optimize_level }}_KSU_SUSFS.zip
+          path: LalSingh_${{ inputs.model }}_${{ inputs.optimize_level }}_KSU.zip
