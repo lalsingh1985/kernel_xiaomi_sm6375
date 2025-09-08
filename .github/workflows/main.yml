@@ -11,10 +11,6 @@ on:
         description: "Kernel source branch"
         required: false
         default: main
-      optimize_level:
-        description: "Optimization level"
-        required: false
-        default: O2 # Choices: O2 or O3
       ksun_branch:
         description: "KernelSU branch"
         required: false
@@ -65,33 +61,43 @@ jobs:
           echo "-LalSingh" > LOCALVERSION
           sed -i 's/^EXTRAVERSION.*/EXTRAVERSION = -LalSingh/' Makefile
 
-      - name: Build Kernel
+      - name: Build Kernel (LLVM 21)
         run: |
           cd kernel
-          export PATH="${CLANG_BIN_PATH}:$PATH"
+
           export ARCH=arm64
           export SUBARCH=arm64
           export LLVM=1
           export LLVM_IAS=1
+          export CC=clang-21
+          export LD=ld.lld
+          export AR=llvm-ar
+          export NM=llvm-nm
+          export OBJCOPY=llvm-objcopy
+          export OBJDUMP=llvm-objdump
+          export STRIP=llvm-strip
           OUT=out
           mkdir -p $OUT
 
-          # Use vendor defconfig
+          # Load vendor defconfig
           make O=$OUT vendor/veux-qgki_defconfig
 
-          # Apply optimization flags
-          if [ "${{ inputs.optimize_level }}" = "O3" ]; then
-            export KCFLAGS="-O3 -pipe -march=armv8-a -flto=thin -fgraphite-identity -floop-nest-optimize"
-          else
-            export KCFLAGS="-O2 -pipe -march=armv8-a -flto=thin"
-          fi
-
+          # Enable ThinLTO and LLD support
+          scripts/config --file $OUT/.config --enable LTO_CLANG        || true
+          scripts/config --file $OUT/.config --enable LTO_CLANG_THIN  || true
+          scripts/config --file $OUT/.config --enable HAVE_LLD        || true
           make O=$OUT olddefconfig
+
+          # Conservative extra flags
+          export EXTRA_CFLAGS="-fno-plt -ffunction-sections -fdata-sections -fomit-frame-pointer"
+          export KBUILD_CFLAGS="$EXTRA_CFLAGS"
+
+          # Build with all cores
           make -j$(nproc) O=$OUT \
             ARCH=arm64 \
             LLVM=1 \
-            LLVM_IAS=1 \
-            CC=clang-21 LD=ld.lld
+            CC=clang-21 LD=ld.lld \
+            EXTRA_CFLAGS="$EXTRA_CFLAGS"
 
           sha256sum $OUT/arch/arm64/boot/Image
 
@@ -100,11 +106,11 @@ jobs:
           git clone --depth=1 https://github.com/TheWildJames/AnyKernel3.git AnyKernel3
           cp kernel/out/arch/arm64/boot/Image AnyKernel3/
           cd AnyKernel3
-          ZIP_NAME="LalSingh_${{ inputs.model }}_${{ inputs.optimize_level }}_KSU.zip"
+          ZIP_NAME="LalSingh_${{ inputs.model }}_LLVM21_KSU.zip"
           zip -r9 "../$ZIP_NAME" ./*
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: LalSingh-${{ inputs.model }}-Kernel
-          path: LalSingh_${{ inputs.model }}_${{ inputs.optimize_level }}_KSU.zip
+          path: LalSingh_${{ inputs.model }}_LLVM21_KSU.zip
