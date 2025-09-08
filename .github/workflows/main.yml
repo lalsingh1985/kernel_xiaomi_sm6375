@@ -49,7 +49,7 @@ jobs:
           cd kernel
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s ${{ inputs.ksun_branch }}
           git submodule update --init --recursive
-          echo "CONFIG_KSU=y" >> vendor/veux-qgki_defconfig
+          echo "CONFIG_KSU=y" >> arch/arm64/configs/vendor/veux-qgki_defconfig
 
       - name: Branding Kernel (Lal Singh)
         run: |
