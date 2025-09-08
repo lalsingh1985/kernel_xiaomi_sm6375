@@ -1,16 +1,25 @@
+name: Kernel Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+  pull_request:
+
 jobs:
   build:
     runs-on: ubuntu-22.04
+
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Install LLVM 21
+      - name: Install Clang/LLVM 21
         run: |
           sudo bash -c "$(wget -O - https://apt.llvm.org/llvm.sh)" 21
           sudo apt-get install -y clang-21 lld-21 llvm-21 llvm-21-dev
 
-          # symlink to make clang 21 the default
+          # symlink tools to default
           sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-21 200
           sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-21 200
           sudo update-alternatives --install /usr/bin/ld.lld ld.lld /usr/bin/ld.lld-21 200
@@ -20,7 +29,7 @@ jobs:
           sudo update-alternatives --install /usr/bin/llvm-objdump llvm-objdump /usr/bin/llvm-objdump-21 200
           sudo update-alternatives --install /usr/bin/llvm-strip llvm-strip /usr/bin/llvm-strip-21 200
 
-      - name: Build kernel
+      - name: Build Kernel
         run: |
           export ARCH=arm64
           export SUBARCH=arm64
@@ -34,5 +43,29 @@ jobs:
           export STRIP=llvm-strip
           export LLVM_IAS=1
 
+          # load defconfig
           make O=out vendor/veux-qgki_defconfig
+
+          # optional: enable LTO
+          scripts/config --file out/.config --enable LTO_CLANG || true
+          scripts/config --file out/.config --enable LTO_CLANG_THIN || true
+          scripts/config --file out/.config --enable HAVE_LLD || true
+          make O=out olddefconfig
+
+          # build with all cores
           make -j$(nproc) O=out
+
+      - name: Package AnyKernel3
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel
+          cp out/arch/arm64/boot/Image AnyKernel/
+          cp out/arch/arm64/boot/dtb.img AnyKernel/ || true
+          cp out/arch/arm64/boot/dtbo.img AnyKernel/ || true
+          cd AnyKernel
+          zip -r9 ../kernel-veux.zip ./*
+
+      - name: Upload Kernel
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-veux
+          path: kernel-veux.zip
