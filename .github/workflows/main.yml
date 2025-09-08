@@ -1,71 +1,54 @@
-name: Kernel Build
+name: Build Kernel with KernelSU and Google Toolchain
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ main ]
-  pull_request:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout source
+      - name: Checkout kernel source
         uses: actions/checkout@v4
 
-      - name: Install Clang/LLVM 21
+      - name: Install dependencies
         run: |
-          sudo bash -c "$(wget -O - https://apt.llvm.org/llvm.sh)" 21
-          sudo apt-get install -y clang-21 lld-21 llvm-21 llvm-21-dev
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex libssl-dev libelf-dev make gcc clang wget git python3 rsync ca-certificates
 
-          # symlink tools to default
-          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-21 200
-          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-21 200
-          sudo update-alternatives --install /usr/bin/ld.lld ld.lld /usr/bin/ld.lld-21 200
-          sudo update-alternatives --install /usr/bin/llvm-ar llvm-ar /usr/bin/llvm-ar-21 200
-          sudo update-alternatives --install /usr/bin/llvm-nm llvm-nm /usr/bin/llvm-nm-21 200
-          sudo update-alternatives --install /usr/bin/llvm-objcopy llvm-objcopy /usr/bin/llvm-objcopy-21 200
-          sudo update-alternatives --install /usr/bin/llvm-objdump llvm-objdump /usr/bin/llvm-objdump-21 200
-          sudo update-alternatives --install /usr/bin/llvm-strip llvm-strip /usr/bin/llvm-strip-21 200
-
-      - name: Build Kernel
+      - name: Download latest Google prebuilt Clang/LLVM toolchain
         run: |
+          wget https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master.tar.gz -O google-clang.tar.gz
+          mkdir google-clang && tar -xzf google-clang.tar.gz -C google-clang
+
+      - name: Add KernelSU support
+        run: |
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
+
+      - name: Configure kernel
+        run: |
+          export PATH="$PWD/google-clang/clang-r*/bin:$PATH"
           export ARCH=arm64
           export SUBARCH=arm64
-          export LLVM=1
-          export CC=clang
-          export LD=ld.lld
-          export AR=llvm-ar
-          export NM=llvm-nm
-          export OBJCOPY=llvm-objcopy
-          export OBJDUMP=llvm-objdump
-          export STRIP=llvm-strip
-          export LLVM_IAS=1
+          make ARCH=arm64 vendor/veux-qgki_deconfig
 
-          # load defconfig
-          make O=out vendor/veux-qgki_defconfig
-
-          # optional: enable LTO
-          scripts/config --file out/.config --enable LTO_CLANG || true
-          scripts/config --file out/.config --enable LTO_CLANG_THIN || true
-          scripts/config --file out/.config --enable HAVE_LLD || true
-          make O=out olddefconfig
-
-          # build with all cores
-          make -j$(nproc) O=out
-
-      - name: Package AnyKernel3
+      - name: Enable CONFIG_KSU=y in kernel config
         run: |
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel
-          cp out/arch/arm64/boot/Image AnyKernel/
-          cp out/arch/arm64/boot/dtb.img AnyKernel/ || true
-          cp out/arch/arm64/boot/dtbo.img AnyKernel/ || true
-          cd AnyKernel
-          zip -r9 ../kernel-veux.zip ./*
+          ./scripts/config --file .config --enable KSU
+          yes "" | make oldconfig
 
-      - name: Upload Kernel
+      - name: Build kernel
+        run: |
+          export PATH="$PWD/google-clang/clang-r*/bin:$PATH"
+          export ARCH=arm64
+          export SUBARCH=arm64
+          make -j$(nproc) ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-android- CLANG_TRIPLE=aarch64-linux-gnu-
+
+      - name: Upload kernel artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: kernel-veux
-          path: kernel-veux.zip
+          name: kernel-build
+          path: |
+            arch/arm64/boot/Image
+            arch/arm64/boot/dtb*
+            
