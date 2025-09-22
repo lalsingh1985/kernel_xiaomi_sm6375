@@ -1,0 +1,108 @@
+name: Kernel Build with Clang 20
+
+on:
+  workflow_dispatch: # Manual trigger
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Setup environment and install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y software-properties-common wget gnupg zip unzip
+        # Add LLVM repository
+        wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+        sudo add-apt-repository -y "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-20 main"
+        sudo apt-get update
+        sudo apt-get install -y build-essential flex bison libssl-dev libelf-dev libncurses-dev \
+                               xmlto python3 python3-pip rsync kmod cpio gcc-11 g++-11 \
+                               clang-20 lld-20 llvm-20 llvm-20-tools
+
+    - name: Set up LLVM 20 tools as default
+      run: |
+        sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-20 100
+        sudo update-alternatives --install /usr/bin/ld.lld ld.lld /usr/bin/ld.lld-20 100
+        sudo update-alternatives --install /usr/bin/llvm-objcopy llvm-objcopy /usr/bin/llvm-objcopy-20 100
+        sudo update-alternatives --install /usr/bin/llvm-objdump llvm-objdump /usr/bin/llvm-objdump-20 100
+        sudo update-alternatives --install /usr/bin/llvm-nm llvm-nm /usr/bin/llvm-nm-20 100
+        sudo update-alternatives --install /usr/bin/llvm-ar llvm-ar /usr/bin/llvm-ar-20 100
+        sudo update-alternatives --install /usr/bin/llvm-strip llvm-strip /usr/bin/llvm-strip-20 100
+        # Verify installations
+        clang --version
+        ld.lld --version
+        llvm-objdump --version
+        llvm-nm --version
+        llvm-ar --version
+        llvm-strip --version
+
+    - name: Set up AArch64 toolchain
+      run: |
+        sudo apt-get install -y gcc-aarch64-linux-gnu
+        echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
+        echo "LLVM=1" >> $GITHUB_ENV
+        echo "LLVM_IAS=1" >> $GITHUB_ENV
+
+    - name: Configure kernel
+      run: |
+        make ARCH=arm64 LLVM=1 LLVM_IAS=1 vendor/veux-qgki_defconfig
+
+    - name: Build kernel
+      run: |
+        make ARCH=arm64 LLVM=1 LLVM_IAS=1 -j$(nproc) 2>&1 | tee build.log
+        
+    - name: Find and verify kernel image
+      run: |
+        # Search for the kernel image in common locations
+        if [ -f "arch/arm64/boot/Image" ]; then
+          echo "Kernel found at arch/arm64/boot/Image"
+          KERNEL_PATH="arch/arm64/boot/Image"
+        elif [ -f "out/arch/arm64/boot/Image" ]; then
+          echo "Kernel found at out/arch/arm64/boot/Image"
+          KERNEL_PATH="out/arch/arm64/boot/Image"
+        else
+          echo "Searching for kernel image..."
+          KERNEL_PATH=$(find . -name "Image" -type f | head -1)
+          if [ -n "$KERNEL_PATH" ]; then
+            echo "Kernel found at $KERNEL_PATH"
+          else
+            echo "Kernel build failed - no Image file found"
+            exit 1
+          fi
+        fi
+        echo "KERNEL_PATH=$KERNEL_PATH" >> $GITHUB_ENV
+        ls -la $(dirname "$KERNEL_PATH")
+        
+    - name: Clone AnyKernel3
+      run: |
+        git clone https://github.com/KernelSU-Next/AnyKernel3.git AnyKernel3
+        
+    - name: Prepare AnyKernel3 package
+      run: |
+        # Copy kernel image to AnyKernel3
+        cp ${{ env.KERNEL_PATH }} AnyKernel3/Image
+        
+        # Create a zip file
+        cd AnyKernel3
+        zip -r9 ../kernel-$(date +'%Y%m%d-%H%M').zip . -x .git README.md *placeholder
+        
+    - name: Upload build artifacts
+      if: success()
+      uses: actions/upload-artifact@v4
+      with:
+        name: kernel-package
+        path: |
+          ${{ env.KERNEL_PATH }}
+          build.log
+          kernel-*.zip
+          
